@@ -1,0 +1,16 @@
+services:
+  dailysongbot:
+    image: dailysongbot:latest
+    container_name: dailysongbot
+    restart: always
+    tty: true
+    stdin_open: true
+    environment:
+      - DiscordBotToken=${DiscordBotToken}
+      - YoutubeApiKey=${YoutubeApiKey}
+      - GuildID=${GuildID}
+    volumes: 
+      - config:/etc/DailySongBot/
+
+volumes: 
+  config:
