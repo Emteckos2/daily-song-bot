@@ -18,7 +18,7 @@ type UserConfigDataStruct struct {
 	PlaylistNextSong int64
 	PlaylistID       string
 	ChannelID        string
-	LastRunTime      time.Time
+	NextRunTime      time.Time
 }
 
 // struct for data from system environment values
@@ -29,7 +29,7 @@ type envConfigStruct struct {
 }
 
 var (
-	UserConfig atomic.Value
+	userConfig atomic.Value
 	EnvConfig  envConfigStruct
 )
 
@@ -96,12 +96,12 @@ func ReadConfig() error {
 		return fmt.Errorf("decode config: %w", err)
 	}
 
-	err = CheckConfigSettings(&data)
+	err = testConfig(&data)
 	if err != nil {
 		return fmt.Errorf("check config settings: %w", err)
 	}
 
-	UserConfig.Store(data)
+	userConfig.Store(data)
 
 	return nil
 }
@@ -125,11 +125,10 @@ func createConfig(configPath string) error {
 				PlaylistNextSong: 1,
 				PlaylistID:       "",
 				ChannelID:        "",
-				LastRunTime:      time.Date(0, time.January, 1, 0, 0, 0, 0, time.UTC),
+				NextRunTime:      time.Date(0, time.January, 1, 0, 0, 0, 0, time.UTC),
 			}
-			UserConfig.Store(data)
 
-			err := WriteConfig()
+			err := Save(&data)
 			if err != nil {
 				return fmt.Errorf("write config: %w", err)
 			}
@@ -147,47 +146,62 @@ func createConfig(configPath string) error {
 	return nil
 }
 
-func WriteConfig() error {
+func Get() (UserConfigDataStruct, error) {
+	var (
+		data UserConfigDataStruct
+		ok   bool
+	)
+	if data, ok = userConfig.Load().(UserConfigDataStruct); !ok {
+		return data, fmt.Errorf("user config load: nil data")
+	}
+	return data, nil
+}
+
+// write data, doesnt check if are correct or not
+func Save(data *UserConfigDataStruct) error {
+	var err error
+
+	err = testConfig(data)
+	if err != nil {
+		return fmt.Errorf("test config: %w", err)
+	}
+
+	b, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+
 	configPath, err := getPath()
 	if err != nil {
 		return fmt.Errorf("get path: %w", err)
 	}
 
-	data, ok := UserConfig.Load().(UserConfigDataStruct)
-	if !ok {
-		return fmt.Errorf("user data load: nil data")
-	}
-
-	b, err := json.Marshal(data)
-
-	if err != nil {
-		return fmt.Errorf("encode config: %w", err)
-	}
-
-	if !json.Valid(b) {
-		return fmt.Errorf("json invalid, cannot save it")
-	}
 	err = os.WriteFile(configPath, b, 0644)
 	if err != nil {
 		return fmt.Errorf("write config file: %w", err)
 	}
+
+	// save also safe data to variable to keep data sync
+	userConfig.Store(*data)
+
 	return nil
 }
 
-func CheckConfigSettings(d *UserConfigDataStruct) error {
+// tests data if are seems to be ok
+func testConfig(data *UserConfigDataStruct) error {
 	switch {
-	case d.ChannelID == "":
+	case data.ChannelID == "":
 		return fmt.Errorf("channel id: not set")
-	case d.PlaylistID == "":
+	case data.PlaylistID == "":
 		return fmt.Errorf("playlist id: not set")
-	case d.LastRunTime.IsZero():
+	case data.NextRunTime.IsZero():
 		return fmt.Errorf("last run time: not set")
-	case d.PlaylistNextSong < 1:
-		return fmt.Errorf("playlist next song: negative position: %d", d.PlaylistNextSong)
-	case d.PostHours < 0 || d.PostHours > 24:
-		return fmt.Errorf("post hours: out of range: %d", d.PostHours)
-	case d.PostMinutes < 0 || d.PostMinutes > 59:
-		return fmt.Errorf("post hours: out of range: %d", d.PostMinutes)
+	case data.PlaylistNextSong < 1:
+		return fmt.Errorf("playlist next song: negative position: %d", data.PlaylistNextSong)
+	case data.PostHours < 0 || data.PostHours > 24:
+		return fmt.Errorf("post hours: out of range: %d h", data.PostHours)
+	case data.PostMinutes < 0 || data.PostMinutes > 59:
+		return fmt.Errorf("post hours: out of range: %d m", data.PostMinutes)
 	default:
 		return nil
 	}
