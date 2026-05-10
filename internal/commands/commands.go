@@ -10,182 +10,136 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
 
+// logic to call funcion for equel interactions
 func ApplicationCommandHandler(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	var err error
 
-	switch i.Type {
-	case discordgo.InteractionApplicationCommand:
-		data := i.ApplicationCommandData()
+	if i.Type != discordgo.InteractionApplicationCommand {
+		return
+	}
 
-		switch data.Name {
-		case "set-config":
-			err = setConfigCommandHandler(i)
-		case "get-config":
-			err = getConfigCommandHandler(i)
-		default:
-		}
+	data := i.ApplicationCommandData()
+
+	switch data.Name {
+	case "set-config":
+		err = setConfigCommandHandler(i)
+
+	case "get-config":
+		err = getConfigCommandHandler(i)
+
 	default:
 	}
 
 	if err != nil {
-		errorlog.Logger.Error(fmt.Errorf("aplication interaction handler: %w", err).Error())
+		errorlog.Logger.Error(fmt.Errorf("%s handler: %w", data.Name, err).Error())
 	}
 }
 
+// check configs user input config and save them if ok
+// also tell user if was done or not
 func setConfigCommandHandler(i *discordgo.InteractionCreate) error {
-	userResponceString := "Failed"
+	var (
+		err error
+		cfg config.UserConfigDataStruct
+	)
+
 	defer func() {
-		discord.RespondUserEphemeral(i, userResponceString)
+		userresponseString := "OK"
+		if err != nil {
+			userresponseString = "Failed, check logs"
+		}
+		discord.RespondUserEphemeral(i, userresponseString)
 	}()
-	// users data
-	a := i.ApplicationCommandData()
-	// map of problems to show user what they fuckup
-	errs := make(map[string]error)
 
-	// commands names
-	setNextSong, publishingTime, publishingChannel, playlistLink :=
-		"set-next-song", "publishing-time", "publishing-channel", "playlist-link"
-
-	// make copy of config to compare if was changed
+	// load configs
+	if cfg, err = config.Get(); err != nil {
+		return fmt.Errorf("user config load: %w", err)
+	}
 
 	// loop and switch all comands parameters user sends
-	for _, d := range a.Options {
+	for _, d := range i.ApplicationCommandData().Options {
+
 		switch d.Name {
+		case "set-next-song":
+			cfg.PlaylistNextSong = d.IntValue()
 
-		case setNextSong:
-			if d.IntValue() > 0 {
-				if ud, ok := config.UserConfig.Load().(config.UserConfigDataStruct); ok {
-					ud.PlaylistNextSong = d.IntValue()
-					config.UserConfig.Store(ud)
-				} else {
-					errs[setNextSong] = fmt.Errorf("set next song: user config load: nil data")
-					errorlog.Logger.Warn(fmt.Errorf("set-config handler: %w", errs[setNextSong]).Error())
-				}
-			} else {
-				errs[setNextSong] = fmt.Errorf("set next song: negative playlist position")
-				errorlog.Logger.Warn(fmt.Errorf("set-config handler: %w", errs[setNextSong]).Error())
-			}
-
-		case publishingTime:
+		case "publishing-time":
 			var h, m int
-			h, m, errs[publishingTime] = decodePostTime(d.StringValue())
-			if errs[publishingTime] != nil {
-				errorlog.Logger.Warn(fmt.Errorf("set-config handler: %w", errs[publishingTime]).Error())
-				break
+			h, m, err = decodePostTime(d.StringValue())
+			if err != nil {
+				return fmt.Errorf("decoding time: %w", err)
 			}
+			cfg.PostHours = h
+			cfg.PostMinutes = m
 
-			if ud, ok := config.UserConfig.Load().(config.UserConfigDataStruct); ok {
-				ud.PostHours = h
-				ud.PostMinutes = m
-				config.UserConfig.Store(ud)
-			} else {
-				errs[publishingTime] = fmt.Errorf("publishing time: user config load: nil data")
-				errorlog.Logger.Warn(fmt.Errorf("set-config handler: %w", errs[publishingTime]).Error())
-			}
+			cfg.NextRunTime = time.Date(cfg.NextRunTime.Year(), cfg.NextRunTime.Month(),
+				cfg.NextRunTime.Day(), h, m, 0, 0, time.UTC)
 
-		case publishingChannel:
-			if ud, ok := config.UserConfig.Load().(config.UserConfigDataStruct); ok {
-				ud.ChannelID = d.ChannelValue(discord.DiscordSession).ID
-				config.UserConfig.Store(ud)
-			} else {
-				errs[publishingChannel] = fmt.Errorf("publishing channel: user config load: nil data")
-				errorlog.Logger.Warn(fmt.Errorf("set-config handler: %w", errs[publishingChannel]).Error())
-			}
+		case "publishing-channel":
+			cfg.ChannelID = d.ChannelValue(discord.DiscordSession).ID
 
-		case playlistLink:
+		case "playlist-link":
 			var (
 				p      string
 				result bool
 			)
-			p, errs[playlistLink] = parslePlaylistLink(d.StringValue())
-			if errs[playlistLink] != nil {
-				errorlog.Logger.Warn(fmt.Errorf("parsle youtube link: %w", errs[playlistLink]).Error())
-				break
+			p, err = parsePlaylistLink(d.StringValue())
+			if err != nil {
+				return fmt.Errorf("parse youtube link: %w", err)
 			}
-			result, errs[playlistLink] = youtube.TestPlaylist(p)
-			if errs[playlistLink] != nil {
-				errorlog.Logger.Warn(fmt.Errorf("youtube test link: %w", errs[playlistLink]).Error())
-				break
+			result, err = youtube.TestPlaylist(p)
+			if err != nil {
+				return fmt.Errorf("test youtube link: %w", err)
 			}
 			if !result {
-				errs[playlistLink] = fmt.Errorf("playlist wasnt found on youtube")
-				errorlog.Logger.Warn(fmt.Errorf("set-config handler: %w", errs[playlistLink]).Error())
-				break
+				return fmt.Errorf("test youtube link: playlist not found")
 			}
-
-			if ud, ok := config.UserConfig.Load().(config.UserConfigDataStruct); ok {
-				ud.PlaylistID = p
-				config.UserConfig.Store(ud)
-			} else {
-				errs[playlistLink] = fmt.Errorf("playlist link: user config load: nil data")
-				errorlog.Logger.Warn(fmt.Errorf("set-config handler: %w", errs[playlistLink]).Error())
-			}
+			cfg.PlaylistID = p
 		default:
 		}
 	}
 
-	// write what was ware changed
-	e := config.WriteConfig()
-	if e != nil {
-		errs["write-config"] = e
-		return fmt.Errorf("set-config handler: problem saving config: %w", e)
-	}
-
-	// create list of errors for user
-	respond := strings.Builder{}
-	for s := range errs {
-		if errs[s] != nil {
-			respond.WriteString(errs[s].Error())
-			// add newline, faster then fmt operations
-			respond.WriteByte('\n')
-		}
-	}
-
-	if respond.Len() != 0 {
-		userResponceString = respond.String()
-	} else {
-		userResponceString = "Everything OK, saved"
+	// save new config
+	err = config.Save(&cfg)
+	if err != nil {
+		return fmt.Errorf("problem saving config: %w", err)
 	}
 
 	return nil
 }
 
 func getConfigCommandHandler(i *discordgo.InteractionCreate) error {
-	userResponceString := "Failed"
+	var (
+		err                error
+		cfg                config.UserConfigDataStruct
+		userresponseString string
+	)
+
+	// output for user
 	defer func() {
-		discord.RespondUserEphemeral(i, userResponceString)
+		if err != nil {
+			userresponseString = "Failed, check logs"
+		}
+		discord.RespondUserEphemeral(i, userresponseString)
 	}()
 
-	resp := strings.Builder{}
-	data := make(map[string]any)
-
-	if ud, ok := config.UserConfig.Load().(config.UserConfigDataStruct); ok {
-		b, err := json.Marshal(ud)
-		if err != nil {
-			return fmt.Errorf("json marshall: unable to encode config for user: %w", err)
-		}
-
-		err = json.Unmarshal(b, &data)
-		if err != nil {
-			return fmt.Errorf("get-config handler: unable to decode config for user: %w", err)
-		}
-	} else {
-		return fmt.Errorf("user config load: nil data")
+	if cfg, err = config.Get(); err != nil {
+		return fmt.Errorf("user config load: %w", err)
 	}
 
-	for s := range data {
-		val := fmt.Sprint(data[s])
-		resp.WriteString(s)
-		resp.WriteString(" : ")
-		resp.WriteString(val)
-		resp.WriteByte('\n')
+	// using json get output
+	b, err := json.MarshalIndent(cfg, "", " ")
+	if err != nil {
+		return fmt.Errorf("unable to encode config for user: %w", err)
 	}
 
-	userResponceString = resp.String()
+	// wrap text to discord format for code
+	userresponseString = fmt.Sprintf("```json\n%s\n```", string(b))
 	return nil
 }
 
@@ -197,7 +151,7 @@ func decodePostTime(s string) (int, int, error) {
 	)
 
 	o := strings.Split(s, ":")
-	if len(o) == 1 {
+	if len(o) != 2 {
 		return 0, 0, fmt.Errorf("decode post time: failed split string")
 	}
 
@@ -214,29 +168,31 @@ func decodePostTime(s string) (int, int, error) {
 	return h, m, nil
 }
 
-func parslePlaylistLink(p string) (string, error) {
+// get id of playlist from link
+func parsePlaylistLink(p string) (string, error) {
 	u, err := url.Parse(p)
 	if err != nil {
 		return "", fmt.Errorf("url parse: %w", err)
 	}
 
+	// accept only theese hostnames
 	switch u.Hostname() {
-	case "youtube.com", "www.youtube.com", "youtu.be", "music.youtube.com":
-		// everything ok, continue
+	case "youtube.com", "youtu.be", "music.youtube.com":
 	default:
-		return "", fmt.Errorf("parsle yt playlist: not supported domain")
+		return "", fmt.Errorf("parse yt playlist: not supported domain")
 	}
 
+	// must contain playlist in url path
 	if u.Path != "/playlist" {
-		return "", fmt.Errorf("parsle yt playlist: not youtube playlist link")
+		return "", fmt.Errorf("parse yt playlist: not youtube playlist link")
 	}
 
-	if !u.Query().Has("list") {
-		return "", fmt.Errorf("parsle yt playlist: no youtube playlist id")
-	}
-
+	// load id
 	q := u.Query()
-	playlistId := q.Get("parsle yt playlist: list")
+	playlistId := q.Get("list")
+	if playlistId == "" {
+		return "", fmt.Errorf("parse yt playlist: no youtube playlist id")
+	}
 
 	return playlistId, nil
 }
