@@ -24,7 +24,7 @@ func main() {
 	)
 	defer stop()
 
-	// decode json
+	// read configs, close when error
 	err = config.ReadConfig()
 	if err != nil {
 		errorlog.Logger.Error(fmt.Errorf("read config: %w", err).Error())
@@ -40,18 +40,20 @@ func main() {
 		stop()
 	}
 
-	// first connect
+	// first bot connect
 	discord.HandleConnection()
 
+	// when discord is reconnect
 	discord.DiscordSession.AddHandler(func(s *discordgo.Session, i *discordgo.Resumed) {
-		// when discord is reconnect
 		discord.HandleConnection()
 	})
 
+	// call when connection end
 	discord.DiscordSession.AddHandler(func(s *discordgo.Session, i *discordgo.Disconnect) {
 		discord.HandleDisconnect()
 	})
 
+	// registry slash commands
 	err = discord.RegistryApplicationCommands()
 	if err != nil {
 		errorlog.Logger.Error(fmt.Errorf("registry app commands: %w", err).Error())
@@ -59,25 +61,28 @@ func main() {
 		stop()
 	}
 
+	// interaction on slash command
 	discord.DiscordSession.AddHandler(commands.ApplicationCommandHandler)
 
-	// run sheduler to controll publishing
+	// run scheduler to control publishing
 	go func() {
 		err = scheduler.Scheduler(ctx)
 		if err != nil {
-			errorlog.Logger.Error(fmt.Errorf("sheduler: %w", err).Error())
+			errorlog.Logger.Error(fmt.Errorf("scheduler: %w", err).Error())
 			exitInt = 4
 			stop()
 		}
 	}()
 
-	// called exit
+	// called exit, user or system
 	<-ctx.Done()
 
+	// peacefully close discord
 	err = discord.CloseDiscordClient()
 	if err != nil {
 		errorlog.Logger.Error(fmt.Errorf("closing discord client: %w", err).Error())
 		os.Exit(5)
 	}
+	// if no problem, exitInt is 0
 	os.Exit(exitInt)
 }
