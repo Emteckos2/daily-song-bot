@@ -18,6 +18,8 @@ var (
 	canSend        = sync.NewCond(&sync.Mutex{})
 )
 
+// set status on connection and reconnection
+// enable sending messages
 func HandleConnection() {
 	err := setDiscordStatus("preparing next song")
 	if err != nil {
@@ -28,10 +30,12 @@ func HandleConnection() {
 	canSend.Broadcast()
 }
 
+// on disconnection disable sending messages
 func HandleDisconnect() {
 	isConnected.Store(false)
 }
 
+// start discord session
 func StartDiscordClient() error {
 	var (
 		err   error
@@ -51,6 +55,7 @@ func StartDiscordClient() error {
 	return nil
 }
 
+// set status
 func setDiscordStatus(status string) error {
 	err := DiscordSession.UpdateCustomStatus(status)
 	if err != nil {
@@ -59,18 +64,19 @@ func setDiscordStatus(status string) error {
 	return nil
 }
 
+// close session and unregister slash commands
 func CloseDiscordClient() error {
 	_, err := DiscordSession.ApplicationCommandBulkOverwrite(
 		DiscordSession.State.Application.ID, config.EnvConfig.GuildID, []*discordgo.ApplicationCommand{})
 	if err != nil {
-		return fmt.Errorf("aplication bulk overwrite: %w", err)
+		return fmt.Errorf("application bulk overwrite: %w", err)
 	}
 
-	// for case bot had before anothers commands
+	// for case bot had before another commands
 	_, err = DiscordSession.ApplicationCommandBulkOverwrite(
 		DiscordSession.State.Application.ID, "", []*discordgo.ApplicationCommand{})
 	if err != nil {
-		return fmt.Errorf("aplication bulk overwrite: %w", err)
+		return fmt.Errorf("application bulk overwrite: %w", err)
 	}
 
 	err = DiscordSession.Close()
@@ -81,6 +87,7 @@ func CloseDiscordClient() error {
 	return nil
 }
 
+// register slash commands with permission for mods
 func RegistryApplicationCommands() error {
 	permsMod := int64(discordgo.PermissionModerateMembers)
 
@@ -119,16 +126,17 @@ func RegistryApplicationCommands() error {
 			},
 			{
 				Name:                     "get-config",
-				Description:              "display current confiuration",
+				Description:              "display current configuration",
 				DefaultMemberPermissions: &permsMod,
 			},
 		})
 	if err != nil {
-		return fmt.Errorf("aplication bulk overwrite: %w", err)
+		return fmt.Errorf("application bulk overwrite: %w", err)
 	}
 	return nil
 }
 
+// send respond to slash command, visible just for user sho use slash
 func RespondUserEphemeral(i *discordgo.InteractionCreate, message string) {
 	err := DiscordSession.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -142,6 +150,7 @@ func RespondUserEphemeral(i *discordgo.InteractionCreate, message string) {
 	}
 }
 
+// send song to channel, only when discord is connected
 func SendDailySong(songNum int64, channelID string, playlistID string) error {
 	songID, err := youtube.GetSong(playlistID, songNum)
 	if err != nil {
