@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -29,12 +30,13 @@ type envConfigStruct struct {
 }
 
 var (
-	userConfig atomic.Value
-	EnvConfig  envConfigStruct
+	ConfigMutex sync.Mutex
+	userConfig  atomic.Value
+	EnvConfig   envConfigStruct
 )
 
+// read current path of program in config folder
 func getPath() (string, error) {
-	// read current path of program in config folder
 	fp := filepath.Dir(os.Args[0])
 	fp += "/config.json"
 	dir, err := filepath.Abs(fp)
@@ -44,13 +46,14 @@ func getPath() (string, error) {
 	return dir, nil
 }
 
+// Read current config from memory
 func ReadConfig() error {
 	var (
 		err        error
 		configPath string
 	)
 
-	// load os env
+	// os env struct
 	EnvConfig = envConfigStruct{
 		DiscordBotToken: os.Getenv("DiscordBotToken"),
 		YoutubeApiKey:   os.Getenv("YoutubeApiKey"),
@@ -58,14 +61,17 @@ func ReadConfig() error {
 	}
 
 	// if there is not present value, drop error
-	if EnvConfig.DiscordBotToken == "" {
+	switch {
+	case EnvConfig.DiscordBotToken == "":
 		return fmt.Errorf("environment variable: DiscordBotToken is not set")
-	}
-	if EnvConfig.YoutubeApiKey == "" {
+
+	case EnvConfig.YoutubeApiKey == "":
 		return fmt.Errorf("environment variable: YoutubeApiKey is not set")
-	}
-	if EnvConfig.GuildID == "" {
+
+	case EnvConfig.GuildID == "":
 		return fmt.Errorf("environment variable: GuildID is not set")
+
+	default:
 	}
 
 	// config.json is intended next program binary
@@ -73,19 +79,21 @@ func ReadConfig() error {
 	if err != nil {
 		return fmt.Errorf("get path: %w", err)
 	}
+
 	// reading config.json file
 	c, err := os.ReadFile(configPath)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		// config will be created if not existing
-		if errors.Is(err, os.ErrNotExist) {
-			e := createConfig(configPath)
-			if e != nil {
-				return fmt.Errorf("create config: %w", e)
-			}
-		} else {
-			return fmt.Errorf("read config file: %w", err)
+		err = createConfig(configPath)
+		if err != nil {
+			return fmt.Errorf("create config: %w", err)
 		}
+		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("read config file: %w", err)
+	}
+
 	if !json.Valid(c) {
 		return fmt.Errorf("invalid config json")
 	}
@@ -134,15 +142,14 @@ func createConfig(configPath string) error {
 			}
 
 			fmt.Println("Please edit:", configPath)
-			fmt.Println("Closing program")
-			os.Exit(0)
+
 		case "n":
 			fmt.Println("Cancelled by user")
-			os.Exit(0)
+
 		default:
 		}
 	}
-	os.Exit(0)
+	fmt.Println("Closing program")
 	return nil
 }
 
@@ -157,9 +164,13 @@ func Get() (UserConfigDataStruct, error) {
 	return data, nil
 }
 
-// write data, doesnt check if are correct or not
+// write data, doesn't check if are correct or not
 func Save(data *UserConfigDataStruct) error {
 	var err error
+
+	// lock mutex to avoid lost updates
+	ConfigMutex.Lock()
+	defer ConfigMutex.Unlock()
 
 	err = testConfig(data)
 	if err != nil {
