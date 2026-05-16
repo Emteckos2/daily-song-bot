@@ -15,10 +15,11 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// logic to call funcion for equel interactions
+// logic to call function for their interaction
 func ApplicationCommandHandler(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	var err error
 
+	// others types are not needed
 	if i.Type != discordgo.InteractionApplicationCommand {
 		return
 	}
@@ -35,33 +36,38 @@ func ApplicationCommandHandler(s *discordgo.Session, i *discordgo.InteractionCre
 	default:
 	}
 
+	// print logs of errors
 	if err != nil {
 		errorlog.Logger.Error(fmt.Errorf("%s handler: %w", data.Name, err).Error())
 	}
 }
 
 // check configs user input config and save them if ok
-// also tell user if was done or not
 func setConfigCommandHandler(i *discordgo.InteractionCreate) error {
 	var (
 		err error
 		cfg config.UserConfigDataStruct
 	)
 
+	// tell user if was done or error in exit
 	defer func() {
-		userresponseString := "OK"
+		userResponseString := "OK"
 		if err != nil {
-			userresponseString = "Failed, check logs"
+			userResponseString = "Failed: " + err.Error()
 		}
-		discord.RespondUserEphemeral(i, userresponseString)
+		discord.RespondUserEphemeral(i, userResponseString)
 	}()
+
+	// lock mutex to avoid lost updates
+	config.ConfigMutex.Lock()
+	defer config.ConfigMutex.Unlock()
 
 	// load configs
 	if cfg, err = config.Get(); err != nil {
 		return fmt.Errorf("user config load: %w", err)
 	}
 
-	// loop and switch all comands parameters user sends
+	// loop and switch all commands parameters user sends
 	for _, d := range i.ApplicationCommandData().Options {
 
 		switch d.Name {
@@ -69,16 +75,14 @@ func setConfigCommandHandler(i *discordgo.InteractionCreate) error {
 			cfg.PlaylistNextSong = d.IntValue()
 
 		case "publishing-time":
-			var h, m int
-			h, m, err = decodePostTime(d.StringValue())
+			cfg.PostHours, cfg.PostMinutes, err = decodePostTime(d.StringValue())
 			if err != nil {
 				return fmt.Errorf("decoding time: %w", err)
 			}
-			cfg.PostHours = h
-			cfg.PostMinutes = m
 
+			// also update next scheduled time in config
 			cfg.NextRunTime = time.Date(cfg.NextRunTime.Year(), cfg.NextRunTime.Month(),
-				cfg.NextRunTime.Day(), h, m, 0, 0, time.UTC)
+				cfg.NextRunTime.Day(), cfg.PostHours, cfg.PostMinutes, 0, 0, time.UTC)
 
 		case "publishing-channel":
 			cfg.ChannelID = d.ChannelValue(discord.DiscordSession).ID
@@ -113,19 +117,20 @@ func setConfigCommandHandler(i *discordgo.InteractionCreate) error {
 	return nil
 }
 
+// respond with current config in json format
 func getConfigCommandHandler(i *discordgo.InteractionCreate) error {
 	var (
 		err                error
 		cfg                config.UserConfigDataStruct
-		userresponseString string
+		userResponseString string
 	)
 
-	// output for user
+	// send user configs or error on exit
 	defer func() {
 		if err != nil {
-			userresponseString = "Failed, check logs"
+			userResponseString = "Failed: " + err.Error()
 		}
-		discord.RespondUserEphemeral(i, userresponseString)
+		discord.RespondUserEphemeral(i, userResponseString)
 	}()
 
 	if cfg, err = config.Get(); err != nil {
@@ -139,7 +144,8 @@ func getConfigCommandHandler(i *discordgo.InteractionCreate) error {
 	}
 
 	// wrap text to discord format for code
-	userresponseString = fmt.Sprintf("```json\n%s\n```", string(b))
+	userResponseString = fmt.Sprintf("```json\n%s\n```", string(b))
+
 	return nil
 }
 
@@ -175,7 +181,7 @@ func parsePlaylistLink(p string) (string, error) {
 		return "", fmt.Errorf("url parse: %w", err)
 	}
 
-	// accept only theese hostnames
+	// accept only these hostname
 	switch u.Hostname() {
 	case "youtube.com", "youtu.be", "music.youtube.com":
 	default:
