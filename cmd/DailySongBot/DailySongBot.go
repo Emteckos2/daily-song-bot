@@ -24,7 +24,7 @@ func main() {
 	)
 	defer stop()
 
-	// read configs, close when error
+	// read configs, close when error or new config is created
 	err = config.ReadConfig()
 	if err != nil {
 		errorlog.Logger.Error(fmt.Errorf("read config: %w", err).Error())
