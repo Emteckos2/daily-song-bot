@@ -45,7 +45,7 @@ func TestPlaylist(playlistID string) (bool, error) {
 		return false, fmt.Errorf("http status: %s", resp.Status)
 	}
 
-	// respons structures
+	// response structures
 	type pageInfo = struct {
 		TotalResults int `json:"totalResults"`
 	}
@@ -71,7 +71,7 @@ func GetSong(playlistId string, playlistItemNum int64) (string, error) {
 		return "", fmt.Errorf("playlist item number: position cannot be negative: %d", playlistItemNum)
 	}
 
-	// respons structures
+	// response structures
 	type songInfo struct {
 		Snippet struct {
 			ResourceId struct {
