@@ -168,10 +168,6 @@ func Get() (UserConfigDataStruct, error) {
 func Save(data *UserConfigDataStruct) error {
 	var err error
 
-	// lock mutex to avoid lost updates
-	ConfigMutex.Lock()
-	defer ConfigMutex.Unlock()
-
 	err = testConfig(data)
 	if err != nil {
 		return fmt.Errorf("test config: %w", err)
